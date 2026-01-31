@@ -527,7 +527,7 @@ if (currentTime - lastPIDTime >= 50) {
   void move_forward(){
     direction = 1;
     direction2 = 1;
-    setpoint=20; 
+    setpoint=40; 
     setpoint2=40;
   } 
   void move_backward(){
