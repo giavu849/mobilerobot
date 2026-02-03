@@ -239,12 +239,12 @@ class Lidardata:
         delta_left = (encoder_count2 - self.last_encoder_left) * self.wheel_circumference / self.ppr
         delta_right = (encoder_count - self.last_encoder_right) * self.wheel_circumference / self.ppr
         delta_s = (delta_left + delta_right) / 2.0
-        # gyro_Z_rad = gyro_Z * (pi / 180.0)
-        # if gyro_Z_rad < 0.02: gyro_Z_rad = 0
-        # delta_theta = gyro_Z_rad * delta_t 
-        # omega = gyro_Z_rad
-        delta_theta = ( delta_right - delta_left) / self.wheel_base
-        omega = delta_theta / delta_t
+        gyro_Z_rad = gyro_Z * (pi / 180.0)
+        if gyro_Z_rad < 0.02: gyro_Z_rad = 0
+        delta_theta = gyro_Z_rad * delta_t 
+        omega = gyro_Z_rad
+        # delta_theta = ( delta_right - delta_left) / self.wheel_base
+        # omega = delta_theta / delta_t
         if delta_t != 0:
             v = delta_s / delta_t
         else: v = delta_s / 0.01
@@ -1230,3 +1230,4 @@ if __name__ == "__main__":
         print("\nĐang dừng...")
         client.loop_stop()
         client.disconnect()
+
