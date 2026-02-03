@@ -148,33 +148,7 @@ class OccupancyGridMap:
                     err += dy
                 y += sy
                 count += 1
-    def save_map_to_laptop(self, filename="my_robot_map.npz"):
-        """Lưu bản đồ lưới xuống ổ cứng laptop"""
-        filepath = os.path.join(self.save_dir, filename)
-        with self.grid_lock:
-            # Lưu mảng grid và các thông số đi kèm
-            np.savez_compressed(filepath, 
-                                grid=self.grid, 
-                                res=self.resolution, 
-                                ox=self.origin_x, 
-                                oy=self.origin_y)
-        print(f"✅ Đã lưu bản đồ thành công tại: {os.path.abspath(filepath)}")
-
-    def load_map_from_laptop(self, filename="my_robot_map.npz"):
-        """Tải bản đồ từ ổ cứng laptop lên lại chương trình"""
-        filepath = os.path.join(self.save_dir, filename)
-        if os.path.exists(filepath):
-            data = np.load(filepath)
-            with self.grid_lock:
-                self.grid = data['grid']
-                self.resolution = float(data['res'])
-                self.origin_x = int(data['ox'])
-                self.origin_y = int(data['oy'])
-            print(f"📂 Đã tải bản đồ thành công từ: {os.path.abspath(filepath)}")
-            return True
-        else:
-            print(f"❌ Không tìm thấy file bản đồ tại: {filepath}")
-            return False
+    
 my_grid = OccupancyGridMap(width_m=10, height_m=10, resolution=0.02)
 class Lidardata:
     
@@ -1216,19 +1190,7 @@ def on_message(client, userdata, message):
             if payload == "done":
                 # print("ESP32 đã hoàn thành lệnh, cho phép gửi lệnh tiếp theo.")
                 robot_data.command_done_event.set() # Mở khóa cho luồng planning
-        elif message.topic == TOPIC_MAP:
-            payload = message.payload.decode('utf-8').strip().lower()
-            
-            if payload == "save":
-                # Gọi hàm lưu xuống laptop
-                my_grid.save_map_to_laptop()
-                
-            elif payload == "load":
-                # Gọi hàm tải từ laptop lên
-                if my_grid.load_map_from_laptop():
-                    # Sau khi load xong, cần báo cho Visualizer vẽ lại màn hình
-                    robot_data.load_map.set()
-            return
+        
     except Exception as e:
         print(f"Lỗi xử lý tin nhắn tại topic {message.topic}: {e}")
 
