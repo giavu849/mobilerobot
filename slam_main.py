@@ -1,6 +1,7 @@
 import paho.mqtt.client as mqtt
 import queue
 import heapq
+import os 
 from scipy.spatial import KDTree, cKDTree
 import threading
 import numpy as np
@@ -13,6 +14,7 @@ MQTT_BROKER = "127.0.0.1"
 TOPIC_DATA = "mqtt/data" # nhận data từ esp32
 TOPIC_ASTAR_TARGET = "astar/target"   # nhận tọa độ (x, y) 
 TOPIC_ASTAR_STATUS = "astar/status"   # nhận tin hieu esp32
+TOPIC_MAP = "mqtt/map"
 class EKFSLAM:
     def __init__(self,initial_pose):
         # state =[x,y,theta]
@@ -80,6 +82,10 @@ class OccupancyGridMap:
         self.origin_y = self.height // 2
         self.grid_lock = threading.Lock()
         self.map_origin = -(self.width // 2) * self.resolution
+        
+        self.save_dir = "D:\map"
+        if not os.path.exists(self.save_dir):
+            os.makedirs(self.save_dir)
 
     def world_to_grid(self, x_m, y_m):
         """Chuyển từ mét sang chỉ số mảng (index)"""
@@ -142,6 +148,33 @@ class OccupancyGridMap:
                     err += dy
                 y += sy
                 count += 1
+    def save_map_to_laptop(self, filename="my_robot_map.npz"):
+        """Lưu bản đồ lưới xuống ổ cứng laptop"""
+        filepath = os.path.join(self.save_dir, filename)
+        with self.grid_lock:
+            # Lưu mảng grid và các thông số đi kèm
+            np.savez_compressed(filepath, 
+                                grid=self.grid, 
+                                res=self.resolution, 
+                                ox=self.origin_x, 
+                                oy=self.origin_y)
+        print(f"✅ Đã lưu bản đồ thành công tại: {os.path.abspath(filepath)}")
+
+    def load_map_from_laptop(self, filename="my_robot_map.npz"):
+        """Tải bản đồ từ ổ cứng laptop lên lại chương trình"""
+        filepath = os.path.join(self.save_dir, filename)
+        if os.path.exists(filepath):
+            data = np.load(filepath)
+            with self.grid_lock:
+                self.grid = data['grid']
+                self.resolution = float(data['res'])
+                self.origin_x = int(data['ox'])
+                self.origin_y = int(data['oy'])
+            print(f"📂 Đã tải bản đồ thành công từ: {os.path.abspath(filepath)}")
+            return True
+        else:
+            print(f"❌ Không tìm thấy file bản đồ tại: {filepath}")
+            return False
 my_grid = OccupancyGridMap(width_m=10, height_m=10, resolution=0.02)
 class Lidardata:
     
@@ -155,6 +188,8 @@ class Lidardata:
             # 'distances': [], 
             'x_coords': [], 
             'y_coords': [],
+            'x_buffers': [], 
+            'y_buffers': [],
         }
         self.client = mqtt_client
         # bien khoi dau
@@ -162,7 +197,7 @@ class Lidardata:
         self.robot_theta = 0.0 # rad
         self.initial_encoder_left = 0.0
         self.initial_encoder_right = 0.0
-        self.icp_counter = 3 # Đếm số gói đã nhận
+        self.packet_counter = 0 # Đếm số gói đã nhận
         self.waypoints_m = [] # Lưu danh sách (x, y) đơn vị Mét để vẽ màu xanh
         #thiết lập biến quản lí
         self.data_lock = threading.Lock()
@@ -171,6 +206,8 @@ class Lidardata:
         self.plot_queue = queue.Queue()
         self.raw_data_queue = queue.Queue(maxsize=100)
         self.counter = 0
+        self.slam_counter = 0
+        self.load_map = threading.Event()
         # 1. 
         self.slam_queue = queue.Queue(maxsize=20) 
         self.is_running = True
@@ -229,13 +266,14 @@ class Lidardata:
         delta_right = (encoder_count - self.last_encoder_right) * self.wheel_circumference / self.ppr
         delta_s = (delta_left + delta_right) / 2.0
         # gyro_Z_rad = gyro_Z * (pi / 180.0)
-        # if abs(gyro_Z_rad) < 0.006: gyro_Z_rad = 0
+        # if gyro_Z_rad < 0.02: gyro_Z_rad = 0
         # delta_theta = gyro_Z_rad * delta_t 
         # omega = gyro_Z_rad
         delta_theta = ( delta_right - delta_left) / self.wheel_base
         omega = delta_theta / delta_t
-        v = delta_s / delta_t
-        
+        if delta_t != 0:
+            v = delta_s / delta_t
+        else: v = delta_s / 0.01
         # cap nhat encoder
         self.last_encoder_left = encoder_count2
         self.last_encoder_right =encoder_count
@@ -259,7 +297,7 @@ class Lidardata:
         valid_mask = (distances_np >= self.MIN_DISTANCE) & (distances_np <= self.MAX_DISTANCE)
         valid_angles = angles_np[valid_mask]
         valid_distances = distances_np[valid_mask]  
-        valid_t_i = t_i[valid_mask]     
+        valid_t_i = t_i[valid_mask]         
         # diem lidar theo pose x0 
         local_x =0 - v * valid_t_i * np.cos( omega * valid_t_i / 2) +  valid_distances * np.cos(valid_angles - omega * valid_t_i)
         local_y =0 - v * valid_t_i * np.sin( omega * valid_t_i / 2) +  valid_distances * np.sin(valid_angles - omega * valid_t_i)
@@ -280,80 +318,93 @@ class Lidardata:
         global_y = global_y[finite_mask] 
         if len(global_x) == 0:
             return
-        with self.data_lock:
-            # 1. Nếu chưa vẽ lần đầu, tích lũy điểm
-            if self.counter == 0:
-                self.data['x_coords'].extend(global_x.tolist())
-                self.data['y_coords'].extend(global_y.tolist())
-                
-                # Khi đủ 500 điểm thì vẽ "phát súng đầu tiên"
-                if len(self.data['x_coords']) >= 1000:
-                    self.counter = 1 # Đánh dấu đã vẽ xong lần đầu
-                    self.plot_queue.put(True)
+        if self.counter == 0:
+            self.data['x_coords'].extend(global_x.tolist())
+            self.data['y_coords'].extend(global_y.tolist())
+            
+            # Khi đủ 500 điểm thì vẽ "phát súng đầu tiên"
+            if len(self.data['x_coords']) >= 1000:
+                self.counter = 1 # Đánh dấu đã vẽ xong lần đầu
+                self.plot_queue.put(True)
                     
         self.robot_distance += abs(delta_s)
         self.robot_theta += abs(delta_theta)
 
         # Chỉ gửi dữ liệu khi robot thực sự di chuyển để giảm tải cho ICP
-        if self.robot_distance >= 0.005 or self.robot_theta >= (1 * pi / 180) :
-            self.icp_counter = 3    
-            self.robot_distance = 0
-            self.robot_theta = 0
-            # Gộp x, y thành ma trận Nx2 để ICP xử lý
-        if self.icp_counter > 0:
-            self.icp_counter -= 1
-            package = {
-                'dx0': local_x.tolist(),
-                'dy0': local_y.tolist(),
-            }
-            try:
-                self.slam_queue.put(package, block=False)
-                # QUAN TRỌNG: Reset bộ tích lũy sau khi gửi thành công
+        if self.counter == 1:
+            # 1. Nếu chưa vẽ lần đầu, tích lũy điểm
+            self.data['x_buffers'].extend(global_x.tolist())
+            self.data['y_buffers'].extend(global_y.tolist())
+            if len(self.data['x_buffers']) > 100:
+                package = {
+                    'dx0': list(self.data['x_buffers']),
+                    'dy0': list(self.data['y_buffers']),
+                    'lx0': local_x.tolist(),
+                    'ly0': local_y.tolist(),
+                }
+                self.data['x_buffers'] = []
+                self.data['y_buffers'] = []
+                try:
+                    self.slam_queue.put(package, block=False)
+    
                 
-            except queue.Full:
-                # Nếu SLAM quá tải, bỏ qua gói này để lấy gói mới nhất sau
-                pass
+                except queue.Full:
+                    # Nếu SLAM quá tải, bỏ qua gói này để lấy gói mới nhất sau
+                    pass
+        else:
+            pass
+
     def _slam_core_worker(self):
         while self.is_running:
-            try:
+            try:            
                 # 1. Lấy dữ liệu từ hàng đợi 
                 package = self.slam_queue.get()
                 dx0 = package['dx0']
                 dy0 = package['dy0']
+                lx0 = package['lx0']
+                ly0 = package['ly0']
                 # GIAI ĐOẠN 1 & 2: Lọc thô và Downsample (đã làm lúc gom gói)
-                fx0, fy0 = self.remove_outliers(dx0, dy0)
-                # vx0, vy0 = self.voxel_downsample( fx0, fy0, my_grid.resolution)
-                    # Lấy vị trí dự đoán hiện tại (thường là từ EKF/Odometry)
-                local_points_filtered = np.column_stack((fx0, fy0))
+                
+                gx0, gy0 = self.remove_outliers(dx0, dy0)
+                # vx0, vy0 = self.voxel_downsample( gx0, gy0, my_grid.resolution)
+                
+                points_filtered = np.column_stack((gx0, gy0))
                 # points = self.upsample_simple(local_points_filtered, max_gap=0.005)
-                refined_pose, obs_cov = self.scan_to_map(local_points_filtered, my_grid.grid)    
+                refined_pose, obs_cov, correction  = self.map_to_map(points_filtered, my_grid.grid)    
                 self.ekf_slam.update( refined_pose, obs_cov)
                 # 4. Cập nhật Pose chính thức và vẽ bản đồ
+                rx, ry, rt = correction
                 with self.pose_lock:
                     self.pose_x, self.pose_y, self.pose_theta = self.ekf_slam.state.flatten()
-                    rx, ry, rt = self.pose_x, self.pose_y, self.pose_theta
+        
 
-                    # 4. QUAN TRỌNG: VẼ TIẾP VÀO MAP DỰA TRÊN POSE CHUẨN
-                    # Nếu không có dòng này, Robot sẽ đi vào vùng tối và ICP bị sai
-                    c, s = np.cos(rt), np.sin(rt)
-                    gx = rx + (local_points_filtered[:, 0] * c - local_points_filtered[:, 1] * s)
-                    gy = ry + (local_points_filtered[:, 0] * s + local_points_filtered[:, 1] * c)
-                    
-                    # Cập nhật Visualizer
-                    with self.data_lock:
-                        self.data['x_coords'] = gx.tolist()
-                        self.data['y_coords'] = gy.tolist()
-                    self.plot_queue.put(True)
+                # 4. QUAN TRỌNG: VẼ TIẾP VÀO MAP DỰA TRÊN POSE CHUẨN
+                # Nếu không có dòng này, Robot sẽ đi vào vùng tối và ICP bị sai
+                c, s = np.cos(rt), np.sin(rt)
+                gx = rx + (points_filtered[:, 0] * c - points_filtered[:, 1] * s)
+                gy = ry + (points_filtered[:, 0] * s + points_filtered[:, 1] * c)
+                
+                # Cập nhật Visualizer
+                with self.data_lock:
+                    self.data['x_coords'] = gx.tolist()
+                    self.data['y_coords'] = gy.tolist()
+                self.plot_queue.put(True)
+            
 
-                # # pose queue:
-                # pose_keyframes = {
-                #     'refined_pose': refined_pose,
-                #     'local_points_filtered' :local_points_filtered
-                # }
-                # try:
-                #     self.graph_queue.put(pose_keyframes, block=False)
-                # except queue.Full:
-                #     pass
+                # pose queue:
+                if self.robot_distance >= 0.01 or self.robot_theta >= (2 * pi / 180) :
+                    self.robot_distance = 0
+                    self.robot_theta = 0
+                    fx0, fy0 = self.remove_outliers(lx0, ly0)
+                    local_points_filtered = np.column_stack((fx0, fy0))
+                    pose_keyframes = {
+                        'refined_pose': refined_pose,
+                        'local_points_filtered' :local_points_filtered
+                    }
+                    try:
+                        self.graph_queue.put(pose_keyframes, block=False)
+                    except queue.Full:
+                        pass
             except queue.Empty:
                 continue
             except Exception as e:
@@ -401,6 +452,85 @@ class Lidardata:
         
         # 3. Kết hợp lại thành một mảng NumPy duy nhất (Column Stack)
         return np.vstack(upsampled_list)
+    def map_to_map(self, recent_global_points, grid_map, max_iterations=60, tolerance=1e-4):
+        """
+        Trả về: 
+        1. refined_pose (Tọa độ mới chuẩn sau ICP)
+        2. obs_cov (Ma trận hiệp phương sai)
+        3. correction (dx, dy, dtheta  - Độ lệch mà ICP đã tìm ra để khớp vào map)
+        """
+        old_pose = self.ekf_slam.state
+        
+        # 1. Lấy tọa độ vật cản từ Grid làm tham chiếu (Target)
+        occupied_indices = np.argwhere(grid_map > 200)
+        if len(occupied_indices) < 10:
+            return old_pose, np.diag([0.2, 0.2, 0.1]), (0, 0, 0)
+
+        map_points = occupied_indices * my_grid.resolution + my_grid.map_origin
+        tree = cKDTree(map_points)
+        
+        # Khởi tạo ma trận biến đổi đồng nhất (Identity)
+        T_total = np.eye(3)
+        current_pts = np.copy(recent_global_points)
+
+        # Biến lưu khoảng cách để tính RMSE sau này
+        distances = np.zeros(len(recent_global_points))
+        valid = np.zeros(len(recent_global_points), dtype=bool)
+
+        for i in range(max_iterations):
+            distances, indices = tree.query(current_pts)
+            
+            # Ngưỡng khớp điểm (10cm)
+            valid = distances < 0.1
+            if np.sum(valid) < 5: break
+            
+            src = current_pts[valid]
+            dst = map_points[indices[valid]]
+ 
+            # SVD để tìm phép biến đổi giữa src và dst
+            mu_s = np.mean(src, axis=0)
+            mu_d = np.mean(dst, axis=0)
+            S = (src - mu_s).T @ (dst - mu_d)
+            U, _, Vt = np.linalg.svd(S)
+            R = Vt.T @ U.T
+            if np.linalg.det(R) < 0:
+                Vt[1,:] *= -1
+                R = Vt.T @ U.T
+            t = mu_d - R @ mu_s
+
+            # Cập nhật các điểm đang xét để lặp tiếp
+            current_pts = (R @ current_pts.T).T + t
+            
+            # Cập nhật ma trận biến đổi tích lũy T_step * T_total
+            T_step = np.eye(3)
+            T_step[:2, :2] = R
+            T_step[:2, 2] = t
+            T_total = T_step @ T_total
+
+            if np.linalg.norm(t) < tolerance: 
+                break
+
+        # --- TRÍCH XUẤT PHÉP DỊCH CHUYỂN (CORRECTION) ---
+        # dx, dy là các phần tử tịnh tiến trong ma trận 3x3
+        dx_corr = T_total[0, 2]
+        dy_corr = T_total[1, 2]
+        # dtheta trích xuất từ phần ma trận xoay 2x2
+        dtheta_corr = np.arctan2(T_total[1, 0], T_total[0, 0])
+
+        # --- TÍNH POSE MỚI ---
+        # Cách 1: Áp dụng T_total vào old_pose (Nếu điểm đầu vào là global chuẩn)
+        new_x = old_pose[0] + dx_corr
+        new_y = old_pose[1] + dy_corr
+        new_yaw = old_pose[2] + dtheta_corr
+        new_yaw = np.arctan2(np.sin(new_yaw), np.cos(new_yaw)) # Chuẩn hóa góc
+        
+        refined_pose = np.array([new_x, new_y, new_yaw])
+        
+        # --- TÍNH ĐỘ TIN CẬY (COVARIANCE) ---
+        final_rmse = np.mean(distances[valid]) if np.any(valid) else 0.1
+        obs_cov = np.diag([final_rmse*0.5, final_rmse*0.5, final_rmse*1.0])
+
+        return refined_pose, obs_cov, (dx_corr, dy_corr, dtheta_corr)
     def scan_to_map(self, local_points, grid_map, max_iterations=60, tolerance=1e-4):
         """
         Sửa đổi: Thêm điều kiện kiểm tra lỗi để hủy scan nếu không khớp chính xác.
@@ -1086,7 +1216,19 @@ def on_message(client, userdata, message):
             if payload == "done":
                 # print("ESP32 đã hoàn thành lệnh, cho phép gửi lệnh tiếp theo.")
                 robot_data.command_done_event.set() # Mở khóa cho luồng planning
-
+        elif message.topic == TOPIC_MAP:
+            payload = message.payload.decode('utf-8').strip().lower()
+            
+            if payload == "save":
+                # Gọi hàm lưu xuống laptop
+                my_grid.save_map_to_laptop()
+                
+            elif payload == "load":
+                # Gọi hàm tải từ laptop lên
+                if my_grid.load_map_from_laptop():
+                    # Sau khi load xong, cần báo cho Visualizer vẽ lại màn hình
+                    robot_data.load_map.set()
+            return
     except Exception as e:
         print(f"Lỗi xử lý tin nhắn tại topic {message.topic}: {e}")
 
