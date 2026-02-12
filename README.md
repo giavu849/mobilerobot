@@ -1,6 +1,6 @@
 This project uses Mosquitto MQTT as the communication broker between the robot and the control station. Follow these steps to set up the environment:
 
-1. Mosquitto Broker Setup (Windows/Laptop)
+#1. Mosquitto Broker Setup (Windows/Laptop)
 Before running the Python scripts, ensure the Mosquitto service is running correctly:
 
 Check Service Status:
@@ -13,7 +13,7 @@ Right-click and select Stop, then Start (or Restart) to ensure a fresh session.
 
 Network Access: Ensure your firewall allows traffic on port 1883.
 
-2. Initialize MQTT Configuration
+#2. Initialize MQTT Configuration
 
 Open a terminal and launch the Mosquitto broker with the custom configuration file to enable network listening:
 
