@@ -2,7 +2,7 @@ This project uses Mosquitto MQTT as the communication broker between the robot a
 
 # 1. Mosquitto Broker Setup (Windows/Laptop)
 
-Create "C:\Program Files\mosquitto\myconfig.conf" with 2 line following:
+Create "C:\Program Files\mosquitto\myconfig.conf" with 2 lines following:
 
 listener 1883 0.0.0.0
 
