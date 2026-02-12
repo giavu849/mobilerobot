@@ -14,13 +14,11 @@ Right-click and select Stop, then Start (or Restart) to ensure a fresh session.
 Network Access: Ensure your firewall allows traffic on port 1883.
 
 2. Initialize MQTT Configuration
+
 Open a terminal and launch the Mosquitto broker with the custom configuration file to enable network listening:
 
-Bash
 # Navigate to your Mosquitto installation folder if necessary
 mosquitto -c mosquitto.conf -v
-(The -v flag enables verbose mode so you can see incoming messages from the robot.)
-
 3. Launch Control & SLAM Modules
 Open two separate terminals and execute the following scripts in order:
 
