@@ -20,14 +20,14 @@ Network Access: Ensure your firewall allows traffic on port 1883.
 # 2. Launch Control & SLAM Modules
 Open two separate terminals and execute the following scripts in order:
 
+//Navigate to your  if necessary
 Terminal 1: Perception & SLAM This handles LiDAR data processing and map generation.
-
-Bash
 python slam_main.py
-Terminal 2: Robot Control This manages the movement commands and navigation logic.
 
-Bash
+//Navigate to your folder if necessary
+Terminal 2: Robot Control This manages the movement commands and navigation logic.
 python control_main.py
+
 💡 Pro-Tips for your README:
 Prerequisites: I recommend adding a section above this called ## Dependencies listing paho-mqtt, numpy, or any other libraries you used.
 
