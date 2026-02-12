@@ -21,11 +21,15 @@ Network Access: Ensure your firewall allows traffic on port 1883.
 Open two separate terminals and execute the following scripts in order:
 
 //Navigate to your  if necessary
+
 Terminal 1: Perception & SLAM This handles LiDAR data processing and map generation.
+
 python slam_main.py
 
 //Navigate to your folder if necessary
+
 Terminal 2: Robot Control This manages the movement commands and navigation logic.
+
 python control_main.py
 
 💡 Pro-Tips for your README:
