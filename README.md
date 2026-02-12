@@ -17,7 +17,7 @@ Network Access: Ensure your firewall allows traffic on port 1883.
 
 Open a terminal and launch the Mosquitto broker with the custom configuration file to enable network listening:
 
-# Navigate to your Mosquitto installation folder if necessary
+//Navigate to your Mosquitto installation folder if necessary
 mosquitto -c mosquitto.conf -v
 3. Launch Control & SLAM Modules
 Open two separate terminals and execute the following scripts in order:
