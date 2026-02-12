@@ -19,7 +19,7 @@ Open a terminal and launch the Mosquitto broker with the custom configuration fi
 
 //Navigate to your Mosquitto installation folder if necessary
 mosquitto -c mosquitto.conf -v
-3. Launch Control & SLAM Modules
+# 3. Launch Control & SLAM Modules
 Open two separate terminals and execute the following scripts in order:
 
 Terminal 1: Perception & SLAM This handles LiDAR data processing and map generation.
