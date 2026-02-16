@@ -37,8 +37,4 @@ Terminal 2: Robot Control This manages the movement commands and navigation logi
 
 python control_main.py
 
-💡 Pro-Tips for your README:
 
-Prerequisites: I recommend adding a section above this called ## Dependencies listing paho-mqtt, numpy, or any other libraries you used.
-
-Troubleshooting: You might want to add: "If the scripts cannot connect, verify that the IP address in slam_main.py matches your laptop's local IP."
